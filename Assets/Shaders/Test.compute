@@ -5,13 +5,17 @@ RWTexture2D<float4> Result;
 RWStructuredBuffer<float> z;
 RWStructuredBuffer<float> u;
 RWStructuredBuffer<float> v;
+RWStructuredBuffer<float> l;
 
 int size;
 int radiusCenterHeater;
 float xCenter;
 float yCenter;
+float xHeater;
+float yHeater;
 float Resolution;
 float CenterTemperature;
+float BorderTemperature;
 float pipeSize;
 float alpha;
 float beta;
@@ -29,42 +33,92 @@ bool CheckCenter(int x, int y, int radius) {
     return false;
 }
 
+bool CheckInCircle(int x, int y, int radius, int xCircleCenter, int yCircleCenter) {
+    if (sqrt((x - xCircleCenter) * (x - xCircleCenter) + (y - yCircleCenter) * (y - yCircleCenter)) < radius) {
+        return true;
+    }
+    return false;
+}
+
 [numthreads(8, 8, 1)]
 void CSMain(uint3 id : SV_DispatchThreadID)
 {
-    int pos = GetPos(id.x, id.y);
-    if (CheckCenter(id.x, id.y, pipeSize)) {
-        float x = id.x / Resolution;
-        float y = id.y / Resolution;
+    int3 realId = id;
+    int pos = GetPos(realId.x, realId.y);
+    
+    if (CheckCenter(realId.x, realId.y, pipeSize)) {
+        float x = realId.x / Resolution;
+        float y = realId.y / Resolution;
         
         float coms[4] = { -1000, -1000, -1000, -1000 };
         float result = 0;
 
-        if (((int)id.x) - 1 >= 0 && ((int)id.y) >= 0 && ((int)id.y) < size) coms[0] = u[GetPos(((int)id.x) - 1, ((int)id.y))];
-        if ((int)id.x + 1 < size && ((int)id.y) >= 0 && ((int)id.y) < size) coms[1] = u[GetPos((int)id.x + 1, ((int)id.y))];
-        if (((int)id.y) - 1 >= 0 && (int)id.x >= 0 && (int)id.x < size) coms[2] = u[GetPos((int)id.x, ((int)id.y) - 1)];
-        if (((int)id.y) + 1 < size && (int)id.x >= 0 && (int)id.x < size) coms[3] = u[GetPos((int)id.x, ((int)id.y) + 1)];
+        if ((realId.x) - 1 >= 0 && (realId.y) >= 0 && (realId.y) < size) coms[0] = u[GetPos((realId.x) - 1, (realId.y))];
+        if (realId.x + 1 < size && (realId.y) >= 0 && (realId.y) < size) coms[1] = u[GetPos(realId.x + 1, (realId.y))];
+        if ((realId.y) - 1 >= 0 && realId.x >= 0 && realId.x < size) coms[2] = u[GetPos(realId.x, (realId.y) - 1)];
+        if ((realId.y) + 1 < size && realId.x >= 0 && realId.x < size) coms[3] = u[GetPos(realId.x, (realId.y) + 1)];
 
         for (int k = 0; k < 4; k++)
-            if (coms[k] != -1000)
+            if (coms[k] != -1000) {
                 result += coms[k];
+            }
+
+
+
+        z[pos] = alpha * result + beta * v[pos];
 
         v[pos] = u[pos];
-        z[pos] = alpha * result + beta * v[pos];
         u[pos] = z[pos];
 
-        if (CheckCenter(id.x, id.y, radiusCenterHeater)) {
+        if (CheckInCircle(realId.x, realId.y, radiusCenterHeater, xHeater, yHeater)) {
             u[pos] = CenterTemperature;
             z[pos] = CenterTemperature;
             v[pos] = CenterTemperature;
         }
-        Result[id.xy] = float4(u[pos] / CenterTemperature, 0.0, 0.0, 0.0);
+        Result[realId.xy] = float4(clamp(u[pos] / CenterTemperature, 0.25, 1.0), 0.25, 0.25, 0.0);
+        
     }
-    else if (CheckCenter(id.x, id.y, outerLayer)) {
-        Result[id.xy] = float4(0.5, 0.5, 0.5, 0.0);
+    else if (CheckCenter(realId.x, realId.y, outerLayer)) {
+        if (BorderTemperature == -1) {
+            float result = 0;
+            float coms[4] = { -1000, -1000, -1000, -1000 };
+            int count = 0;
+
+            if (CheckCenter(realId.x - 1, realId.y, pipeSize)) {
+                coms[0] = u[GetPos(realId.x - 1, realId.y)] - 0.00001 * realId.x;
+                count++;
+            }
+            if (CheckCenter(realId.x + 1, realId.y, pipeSize)) {
+                coms[1] = u[GetPos(realId.x + 1, realId.y)] - 0.00001 * realId.x;
+                count++;
+            }
+            if (CheckCenter(realId.x, realId.y - 1, pipeSize)) {
+                coms[2] = u[GetPos(realId.x, realId.y - 1)] - 0.00001 * realId.y;
+                count++;
+            }
+            if (CheckCenter(realId.x, realId.y + 1, pipeSize)) {
+                coms[3] = u[GetPos(realId.x, realId.y + 1)] - 0.00001 * realId.y;
+                count++;
+            }
+            for (int k = 0; k < 4; k++)
+                if (coms[k] != -1000) {
+                    result += coms[k];
+                }
+            if (count != 0) {
+                u[pos] = result / count;
+                Result[realId.xy] = float4(clamp(u[pos] / CenterTemperature, 0.0, 1.0), 0.0, 0.0, 0.0);
+            }
+            else {
+                Result[realId.xy] = float4(1.0, 1.0, 1.0, 0.0);
+            }
+        }
+        else {
+            u[pos] = BorderTemperature;
+            Result[realId.xy] = float4(1.0, 1.0, 1.0, 0.0);
+        }
     }
     else {
-        Result[id.xy] = float4(1.0, 1.0, 1.0, 0.0);
+        Result[realId.xy] = float4(1.0, 1.0, 1.0, 0.0);
     }
 }
 

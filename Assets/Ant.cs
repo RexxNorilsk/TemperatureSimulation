@@ -53,7 +53,7 @@ public class Ant : MonoBehaviour
             }
         }
     }
-
+    
 
     //(* инициализация городов*)
     public void MakeTowns()
